@@ -12,47 +12,48 @@ export default function useDailySentMessagesData() {
 
   const { data, hasError } = sql<{
     period_start: string;
-    total_minutes_online: number;
+    cumulative_minutes_online: number;
   }>`
-    WITH RECURSIVE dates(day, day_group) AS (
-      VALUES('${start}', 1)
-      UNION ALL
-      SELECT date(day, '+1 day'), 
-      CASE WHEN (julianday(date(day, '+1 day')) - julianday('${start}')) % ${periodLength} = 0 THEN day_group + 1 ELSE day_group END
-      FROM dates
-      WHERE day < date('${start}', '+${days} days')
-    ),
-    pre_agg AS (
-      SELECT 
-          date(datetime(started_date, 'unixepoch')) AS day,
-          SUM(duration_mins) as total_minutes_online
-      FROM 
-          sessions
-      GROUP BY
-          day
-    )
+  WITH RECURSIVE dates(day, day_group) AS (
+    VALUES('${start}', 1)
+    UNION ALL
+    SELECT date(day, '+1 day'), 
+    CASE WHEN (julianday(date(day, '+1 day')) - julianday('${start}')) % ${periodLength} = 0 THEN day_group + 1 ELSE day_group END
+    FROM dates
+    WHERE day < date('${start}', '+${days} days')
+  ),
+  pre_agg AS (
     SELECT 
-      MIN(dates.day) as period_start,
-      MAX(dates.day) as period_end,
-      IFNULL(SUM(pre_agg.total_minutes_online), 0) as total_minutes_online
+        date(datetime(started_date, 'unixepoch')) AS day,
+        SUM(duration_mins) as total_minutes_online
     FROM 
-      dates
-    LEFT JOIN 
-      pre_agg
-    ON 
-      pre_agg.day = dates.day
-    GROUP BY 
-      dates.day_group
-    ORDER BY 
-      period_start ASC;
+        sessions
+    GROUP BY
+        day
+  )
+  SELECT 
+    MIN(dates.day) as period_start,
+    MAX(dates.day) as period_end,
+    IFNULL(SUM(pre_agg.total_minutes_online), 0) as total_minutes_online,
+    SUM(IFNULL(pre_agg.total_minutes_online, 0)) OVER (ORDER BY MIN(dates.day)) as cumulative_minutes_online
+  FROM 
+    dates
+  LEFT JOIN 
+    pre_agg
+  ON 
+    pre_agg.day = dates.day
+  GROUP BY 
+    dates.day_group
+  ORDER BY 
+    period_start ASC;
   `;
 
   if (hasError) {
     return null;
   }
 
-  return data.map(({ period_start, total_minutes_online }) => ({
+  return data.map(({ period_start, cumulative_minutes_online }) => ({
     label: period_start,
-    value: total_minutes_online,
+    value: cumulative_minutes_online,
   }));
 }
